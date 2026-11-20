@@ -717,4 +717,49 @@ JMRcpXiNn8+r6eT5vwuIgZK1xwMA
 """
 
 html = gzip.decompress(base64.b64decode("".join(APP.split()))).decode("utf-8")
+
+# Streamlit shows the app inside a srcdoc iframe, where URL-hash routing is blocked.
+# These exact replacements switch the app to an in-memory router when it runs embedded.
+PATCHES = [
+    (r'''/* ---------- routing ---------- */
+function route() {
+  const h = (location.hash || '').replace(/^#/, '');''',
+     r'''/* ---------- routing ---------- */
+// When embedded via srcdoc (e.g. Streamlit), the URL can't hold a hash route, so keep it in memory.
+const EMBED = String(location.href).startsWith('about:');
+let memHash = '';
+function getHash() { return EMBED ? memHash : location.hash; }
+function setHash(h) {
+  h = '#' + String(h).replace(/^#/, '');
+  if (!EMBED) { location.hash = h; return; }
+  if (memHash === h) return;
+  memHash = h; window.dispatchEvent(new Event('hashchange'));
+}
+if (EMBED) document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a[href^="#"]');
+  if (!a) return;
+  e.preventDefault(); const h = a.getAttribute('href'); if (h && h.length > 1) setHash(h);
+}, true);
+function route() {
+  const h = (getHash() || '').replace(/^#/, '');'''),
+    (r'''save(); location.hash = `o-event-${e.id}`; render();''',
+     r'''save(); setHash(`o-event-${e.id}`); render();'''),
+    (r'''save(); location.hash = `o-shift-${s.id}`; render();''',
+     r'''save(); setHash(`o-shift-${s.id}`); render();'''),
+    (r'''function navTo(h) { if (location.hash === '#' + h) render(); else location.hash = h; }''',
+     r'''function navTo(h) { if (getHash() === '#' + h) render(); else setHash(h); }'''),
+    (r'''ui.modal = null; location.hash = 'o-dashboard'; render();''',
+     r'''ui.modal = null; setHash('o-dashboard'); render();'''),
+    (r'''const sameRoute = ui.lastRoute === location.hash;''',
+     r'''const sameRoute = ui.lastRoute === getHash();'''),
+    (r'''ui.lastRoute = location.hash;''',
+     r'''ui.lastRoute = getHash();'''),
+    (r'''const valid = /^#(o|v)-/.test(location.hash);
+  if (!valid) history.replaceState(null, '', '#' + (S.role === 'volunteer' ? 'v-home' : 'o-dashboard'));''',
+     r'''const valid = /^#(o|v)-/.test(getHash());
+  if (!valid) { const h0 = '#' + (S.role === 'volunteer' ? 'v-home' : 'o-dashboard'); if (EMBED) memHash = h0; else history.replaceState(null, '', h0); }'''),
+]
+for _old, _new in PATCHES:
+    assert html.count(_old) == 1, _old[:60]
+    html = html.replace(_old, _new)
 components.html(html, height=950, scrolling=True)
